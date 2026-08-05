@@ -1,9 +1,9 @@
 
 
 
-#!/usr/bin/env bash
 
-# git-cp.sh - Duplicates a file simulating historical commits from its source history, handling renames
+#!/usr/bin/env bash
+# git-cp - Duplicates a file simulating historical commits from its source history
 
 set -e
 
@@ -56,23 +56,21 @@ while IFS="|" read -r COMMIT BLOB_HASH MODE ORIG_MSG; do
         OLD_PATH="${ORIG_MSG##*|}"
         ORIG_MSG="${ORIG_MSG%|*}"
     fi
-    
+
     if [ -n "$BLOB_HASH" ] && [ "$BLOB_HASH" != "0000000000000000000000000000000000000000" ]; then
-        # Start fresh from parent's tree each iteration
         if [ -n "$CURRENT_TREE" ]; then
             git read-tree "$CURRENT_TREE"
         fi
-        
-        # Remove old path if this was a rename
+
+        # If it was a rename, append a newline to the blob content to force a tree diff
         if [ -n "$OLD_PATH" ]; then
-            echo " ">>$DST_FILE
+            BLOB_HASH=$( (git cat-file -p "$BLOB_HASH"; echo "") | git hash-object -w --stdin )
         fi
-        
-        # Add the historical blob as the target file
+
         git update-index --add --cacheinfo "$MODE" "$BLOB_HASH" "$DST_FILE"
 
         CURRENT_TREE=$(git write-tree)
-        
+
         COMMIT_MSG="git cp ($SRC_FILE -> $DST_FILE): $ORIG_MSG"
         PARENT_COMMIT=$(git commit-tree "$CURRENT_TREE" -p "$PARENT_COMMIT" -m "$COMMIT_MSG")
     fi
@@ -81,3 +79,4 @@ done <<< "$HISTORY"
 git reset --hard "$PARENT_COMMIT"
 
 echo "Successfully copied history of '$SRC_FILE' to '$DST_FILE'."
+
