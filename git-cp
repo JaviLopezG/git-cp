@@ -2,6 +2,7 @@
 
 
 
+
 #!/usr/bin/env bash
 # git-cp - Duplicates a file simulating historical commits from its source history
 
@@ -31,11 +32,9 @@ awk '
 /^:/ {
     mode = $2
     blob = $4
-    n = NF
-    path = $n
-    status = $(n-1)
+    status = $5
     if (status ~ /^R/) {
-        old_path = $(n-2)
+        old_path = $6
         printf "%s|%s|%s|%s|%s\n", hash, blob, mode, msg, old_path
     } else {
         printf "%s|%s|%s|%s\n", hash, blob, mode, msg
