@@ -1,4 +1,7 @@
-t-cp: Duplicates a file simulating historical commits from its source history
+
+
+#!/usr/bin/env bash
+# git-cp: Duplicates a file simulating historical commits from its source history
 
 set -e
 
