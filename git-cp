@@ -16,7 +16,7 @@ if [ ! -f "$SRC_FILE" ]; then
 fi
 
 # 1. Get all commit hashes of the source file in chronological order
-COMMITS=$(git log --follow --reverse --format="%H" -- "$SRC_FILE")
+COMMITS=$(git log --follow --format="%H" -- "$SRC_FILE"|tac)
 
 if [ -z "$COMMITS" ]; then
     echo "Error: No history found for '$SRC_FILE'."
