@@ -1,0 +1,55 @@
+t-cp: Duplicates a file simulating historical commits from its source history
+
+set -e
+
+if [ "$#" -lt 2 ]; then
+    echo "Usage: git cp <source_file> <target_file>"
+    exit 1
+fi
+
+SRC_FILE="$1"
+DST_FILE="$2"
+
+if [ ! -f "$SRC_FILE" ]; then
+    echo "Error: Source file '$SRC_FILE' does not exist."
+    exit 1
+fi
+
+# 1. Get all commit hashes of the source file in chronological order
+COMMITS=$(git log --follow --reverse --format="%H" -- "$SRC_FILE")
+
+if [ -z "$COMMITS" ]; then
+    echo "Error: No history found for '$SRC_FILE'."
+    exit 1
+fi
+
+# Start from current HEAD
+PARENT_COMMIT=$(git rev-parse HEAD)
+CURRENT_TREE=$(git write-tree)
+
+# 2. Replay each historical blob as a new commit onto the current branch
+for COMMIT in $COMMITS; do
+    # Extract the blob hash of the source file at that specific commit
+    BLOB_HASH=$(git ls-tree "$COMMIT" "$SRC_FILE" | awk '{print $3}')
+    
+    # Extract original commit message and author details
+    ORIG_MSG=$(git log -1 --format="%s" "$COMMIT")
+    
+    if [ -n "$BLOB_HASH" ]; then
+        # Update index in memory with the new file destination without touching the workspace
+        git update-index --add --cacheinfo 100644 "$BLOB_HASH" "$DST_FILE"
+        
+        # Create a new tree object in Git database
+        NEW_TREE=$(git write-tree)
+        
+        # Create a new commit object pointing to the previous parent
+        COMMIT_MSG="git cp ($SRC_FILE -> $DST_FILE): $ORIG_MSG"
+        PARENT_COMMIT=$(git commit-tree "$NEW_TREE" -p "$PARENT_COMMIT" -m "$COMMIT_MSG")
+    fi
+done
+
+# 3. Move HEAD to the new commit and update working tree
+git reset --hard "$PARENT_COMMIT"
+
+echo "Successfully copied history of '$SRC_FILE' to '$DST_FILE'."
+
