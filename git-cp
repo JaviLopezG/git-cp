@@ -1,8 +1,6 @@
 
 
 
-
-
 #!/usr/bin/env bash
 
 # git-cp.sh - Duplicates a file simulating historical commits from its source history, handling renames
@@ -22,26 +20,19 @@ if [ ! -f "$SRC_FILE" ]; then
     exit 1
 fi
 
-# 1. Get history in chronological order: COMMIT_HASH|BLOB_HASH|MODE|MSG[:OLD_PATH if rename]
 HISTORY=$(git log --follow --raw --no-abbrev --format="COMMIT|%H|%s" -- "$SRC_FILE" | \
 awk '
-BEGIN { FS="|" }
 /^COMMIT\|/ {
-    # Remove "COMMIT|" prefix
     sub(/^COMMIT\|/, "")
-    # Find the separator between hash and message
     idx = index($0, "|")
     hash = substr($0, 1, idx - 1)
     msg = substr($0, idx + 1)
 }
 /^:/ {
-    # The raw output line format is: :old_mode new_mode old_blob new_blob status path
     mode = $2
     blob = $4
-    # Extract path (may have OLD_PATH NEW_PATH for renames)
     n = NF
     path = $n
-    # Check if this is a rename/move (status starts with R)
     status = $(n-1)
     if (status ~ /^R/) {
         old_path = $(n-2)
@@ -57,34 +48,36 @@ if [ -z "$HISTORY" ]; then
 fi
 
 PARENT_COMMIT=$(git rev-parse HEAD)
+CURRENT_TREE=""
 
-# 2. Replay each historical blob as a new commit onto the current branch
 while IFS="|" read -r COMMIT BLOB_HASH MODE ORIG_MSG; do
-    # Check if we have an old path (from rename detection)
     OLD_PATH=""
     if [[ "$ORIG_MSG" == *"|"* ]]; then
-        # Parse out potential old_path from the end
         OLD_PATH="${ORIG_MSG##*|}"
         ORIG_MSG="${ORIG_MSG%|*}"
     fi
     
-    # Skip if blob hash is zeroed (e.g., deleted files, though --follow usually prevents this)
     if [ -n "$BLOB_HASH" ] && [ "$BLOB_HASH" != "0000000000000000000000000000000000000000" ]; then
-        # For rename commits, remove the old path first to force tree change
-        if [ -n "$OLD_PATH" ]; then
-            git update-index --remove "$OLD_PATH" 2>/dev/null || true
+        # Start fresh from parent's tree each iteration
+        if [ -n "$CURRENT_TREE" ]; then
+            git read-tree "$CURRENT_TREE"
         fi
-        # Update index with the exact historical blob and its file mode
+        
+        # Remove old path if this was a rename
+        if [ -n "$OLD_PATH" ]; then
+            git update-index --remove "$OLD_PATH"
+        fi
+        
+        # Add the historical blob as the target file
         git update-index --add --cacheinfo "$MODE" "$BLOB_HASH" "$DST_FILE"
 
-        NEW_TREE=$(git write-tree)
-
+        CURRENT_TREE=$(git write-tree)
+        
         COMMIT_MSG="git cp ($SRC_FILE -> $DST_FILE): $ORIG_MSG"
-        PARENT_COMMIT=$(git commit-tree "$NEW_TREE" -p "$PARENT_COMMIT" -m "$COMMIT_MSG")
+        PARENT_COMMIT=$(git commit-tree "$CURRENT_TREE" -p "$PARENT_COMMIT" -m "$COMMIT_MSG")
     fi
 done <<< "$HISTORY"
 
-# 3. Move HEAD to the new commit and update working tree
 git reset --hard "$PARENT_COMMIT"
 
 echo "Successfully copied history of '$SRC_FILE' to '$DST_FILE'."
