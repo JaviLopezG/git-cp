@@ -65,7 +65,7 @@ while IFS="|" read -r COMMIT BLOB_HASH MODE ORIG_MSG; do
         
         # Remove old path if this was a rename
         if [ -n "$OLD_PATH" ]; then
-            git update-index --remove "$OLD_PATH"
+            echo " ">>$DST_FILE
         fi
         
         # Add the historical blob as the target file
