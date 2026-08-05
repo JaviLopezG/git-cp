@@ -1,9 +1,11 @@
 
 
 
-#git-cp.sh - Duplicates a file simulating historical commits from its source history, handling renames
+
 
 #!/usr/bin/env bash
+
+# git-cp.sh - Duplicates a file simulating historical commits from its source history, handling renames
 
 set -e
 
@@ -20,24 +22,34 @@ if [ ! -f "$SRC_FILE" ]; then
     exit 1
 fi
 
-# 1. Get history in chronological order: COMMIT_HASH|BLOB_HASH|MODE|MSG
-# git log --raw --follow gives the exact blob hashes and file modes without needing the filename.
+# 1. Get history in chronological order: COMMIT_HASH|BLOB_HASH|MODE|MSG[:OLD_PATH if rename]
 HISTORY=$(git log --follow --raw --no-abbrev --format="COMMIT|%H|%s" -- "$SRC_FILE" | \
-    awk '
-    /^COMMIT\|/ {
-        # Remove "COMMIT|" prefix
-        sub(/^COMMIT\|/, "")
-        # Find the separator between hash and message
-        idx = index($0, "|")
-        hash = substr($0, 1, idx - 1)
-        msg = substr($0, idx + 1)
-    }
-    /^:/ {
-        # The raw output line format is: :old_mode new_mode old_blob new_blob status path
-        mode = $2
-        blob = $4
+awk '
+BEGIN { FS="|" }
+/^COMMIT\|/ {
+    # Remove "COMMIT|" prefix
+    sub(/^COMMIT\|/, "")
+    # Find the separator between hash and message
+    idx = index($0, "|")
+    hash = substr($0, 1, idx - 1)
+    msg = substr($0, idx + 1)
+}
+/^:/ {
+    # The raw output line format is: :old_mode new_mode old_blob new_blob status path
+    mode = $2
+    blob = $4
+    # Extract path (may have OLD_PATH NEW_PATH for renames)
+    n = NF
+    path = $n
+    # Check if this is a rename/move (status starts with R)
+    status = $(n-1)
+    if (status ~ /^R/) {
+        old_path = $(n-2)
+        printf "%s|%s|%s|%s|%s\n", hash, blob, mode, msg, old_path
+    } else {
         printf "%s|%s|%s|%s\n", hash, blob, mode, msg
-    }' | tac)
+    }
+}' | tac)
 
 if [ -z "$HISTORY" ]; then
     echo "Error: No history found for '$SRC_FILE'."
@@ -48,8 +60,20 @@ PARENT_COMMIT=$(git rev-parse HEAD)
 
 # 2. Replay each historical blob as a new commit onto the current branch
 while IFS="|" read -r COMMIT BLOB_HASH MODE ORIG_MSG; do
+    # Check if we have an old path (from rename detection)
+    OLD_PATH=""
+    if [[ "$ORIG_MSG" == *"|"* ]]; then
+        # Parse out potential old_path from the end
+        OLD_PATH="${ORIG_MSG##*|}"
+        ORIG_MSG="${ORIG_MSG%|*}"
+    fi
+    
     # Skip if blob hash is zeroed (e.g., deleted files, though --follow usually prevents this)
     if [ -n "$BLOB_HASH" ] && [ "$BLOB_HASH" != "0000000000000000000000000000000000000000" ]; then
+        # For rename commits, remove the old path first to force tree change
+        if [ -n "$OLD_PATH" ]; then
+            git update-index --remove "$OLD_PATH" 2>/dev/null || true
+        fi
         # Update index with the exact historical blob and its file mode
         git update-index --add --cacheinfo "$MODE" "$BLOB_HASH" "$DST_FILE"
 
@@ -64,4 +88,3 @@ done <<< "$HISTORY"
 git reset --hard "$PARENT_COMMIT"
 
 echo "Successfully copied history of '$SRC_FILE' to '$DST_FILE'."
-
