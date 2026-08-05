@@ -1,7 +1,9 @@
 
 
+
+#git-cp.sh - Duplicates a file simulating historical commits from its source history, handling renames
+
 #!/usr/bin/env bash
-# git-cp: Duplicates a file simulating historical commits from its source history
 
 set -e
 
@@ -18,38 +20,45 @@ if [ ! -f "$SRC_FILE" ]; then
     exit 1
 fi
 
-# 1. Get all commit hashes of the source file in chronological order
-COMMITS=$(git log --follow --format="%H" -- "$SRC_FILE"|tac)
+# 1. Get history in chronological order: COMMIT_HASH|BLOB_HASH|MODE|MSG
+# git log --raw --follow gives the exact blob hashes and file modes without needing the filename.
+HISTORY=$(git log --follow --raw --no-abbrev --format="COMMIT|%H|%s" -- "$SRC_FILE" | \
+    awk '
+    /^COMMIT\|/ {
+        # Remove "COMMIT|" prefix
+        sub(/^COMMIT\|/, "")
+        # Find the separator between hash and message
+        idx = index($0, "|")
+        hash = substr($0, 1, idx - 1)
+        msg = substr($0, idx + 1)
+    }
+    /^:/ {
+        # The raw output line format is: :old_mode new_mode old_blob new_blob status path
+        mode = $2
+        blob = $4
+        printf "%s|%s|%s|%s\n", hash, blob, mode, msg
+    }' | tac)
 
-if [ -z "$COMMITS" ]; then
+if [ -z "$HISTORY" ]; then
     echo "Error: No history found for '$SRC_FILE'."
     exit 1
 fi
 
-# Start from current HEAD
 PARENT_COMMIT=$(git rev-parse HEAD)
-CURRENT_TREE=$(git write-tree)
 
 # 2. Replay each historical blob as a new commit onto the current branch
-for COMMIT in $COMMITS; do
-    # Extract the blob hash of the source file at that specific commit
-    BLOB_HASH=$(git ls-tree "$COMMIT" "$SRC_FILE" | awk '{print $3}')
-    
-    # Extract original commit message and author details
-    ORIG_MSG=$(git log -1 --format="%s" "$COMMIT")
-    
-    if [ -n "$BLOB_HASH" ]; then
-        # Update index in memory with the new file destination without touching the workspace
-        git update-index --add --cacheinfo 100644 "$BLOB_HASH" "$DST_FILE"
-        
-        # Create a new tree object in Git database
+while IFS="|" read -r COMMIT BLOB_HASH MODE ORIG_MSG; do
+    # Skip if blob hash is zeroed (e.g., deleted files, though --follow usually prevents this)
+    if [ -n "$BLOB_HASH" ] && [ "$BLOB_HASH" != "0000000000000000000000000000000000000000" ]; then
+        # Update index with the exact historical blob and its file mode
+        git update-index --add --cacheinfo "$MODE" "$BLOB_HASH" "$DST_FILE"
+
         NEW_TREE=$(git write-tree)
-        
-        # Create a new commit object pointing to the previous parent
+
         COMMIT_MSG="git cp ($SRC_FILE -> $DST_FILE): $ORIG_MSG"
         PARENT_COMMIT=$(git commit-tree "$NEW_TREE" -p "$PARENT_COMMIT" -m "$COMMIT_MSG")
     fi
-done
+done <<< "$HISTORY"
 
 # 3. Move HEAD to the new commit and update working tree
 git reset --hard "$PARENT_COMMIT"
