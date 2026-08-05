@@ -62,9 +62,9 @@ while IFS="|" read -r COMMIT BLOB_HASH MODE ORIG_MSG; do
             git read-tree "$CURRENT_TREE"
         fi
 
-        # If it was a rename, append a newline to the blob content to force a tree diff
+        # If it was a rename, append a white space to the blob content to force a tree diff
         if [ -n "$OLD_PATH" ]; then
-            BLOB_HASH=$( (git cat-file -p "$BLOB_HASH"; echo "") | git hash-object -w --stdin )
+            BLOB_HASH=$( (git cat-file -p "$BLOB_HASH"; echo -n " ") | git hash-object -w --stdin )
         fi
 
         git update-index --add --cacheinfo "$MODE" "$BLOB_HASH" "$DST_FILE"
